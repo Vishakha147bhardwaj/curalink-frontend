@@ -1,3 +1,6 @@
+import React from 'react';
+import PropTypes from 'prop-types';
+
 const STATUS_COLORS = {
   RECRUITING: '#22c55e',
   ACTIVE_NOT_RECRUITING: '#f59e0b',
@@ -47,3 +50,17 @@ export default function TrialCard({ trial, index }) {
     </a>
   );
 }
+
+TrialCard.propTypes = {
+  trial: PropTypes.shape({
+    status: PropTypes.string,
+    url: PropTypes.string,
+    phase: PropTypes.string,
+    title: PropTypes.string,
+    locations: PropTypes.arrayOf(PropTypes.string),
+    contact: PropTypes.shape({
+      email: PropTypes.string
+    })
+  }).isRequired,
+  index: PropTypes.number.isRequired
+};

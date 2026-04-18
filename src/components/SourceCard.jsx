@@ -1,3 +1,6 @@
+import React from 'react';
+import PropTypes from 'prop-types';
+
 export default function SourceCard({ pub, index }) {
   return (
     <a href={pub.url} target="_blank" rel="noopener noreferrer"
@@ -35,3 +38,15 @@ export default function SourceCard({ pub, index }) {
     </a>
   );
 }
+
+SourceCard.propTypes = {
+  pub: PropTypes.shape({
+    url: PropTypes.string.isRequired,
+    source: PropTypes.string.isRequired,
+    year: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    title: PropTypes.string,
+    abstract: PropTypes.string,
+    authors: PropTypes.arrayOf(PropTypes.string)
+  }).isRequired,
+  index: PropTypes.number.isRequired
+};

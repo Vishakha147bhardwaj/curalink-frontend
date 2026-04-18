@@ -1,74 +1,64 @@
-import { useState } from 'react';
+import React, { useRef } from 'react';
+import PropTypes from 'prop-types';
 
-export default function InputBar({ onSend, loading, hasSession }) {
-  const [text, setText] = useState('');
+function InputBar({ onSend, loading }) {
+  const textareaRef = useRef(null);
 
   const handleSend = () => {
-    if (!text.trim() || loading) return;
-    onSend(text.trim());
-    setText('');
+    const text = textareaRef.current?.value.trim();
+    if (!text || loading) return;
+    onSend(text);
+    textareaRef.current.value = '';
+    textareaRef.current.style.height = 'auto';
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const handleInput = (e) => {
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
   };
 
   return (
-    <div style={{
-      padding: '16px 20px',
-      borderTop: '1px solid #1e2030',
-      background: '#0f1117'
-    }}>
-      <div style={{
-        display: 'flex',
-        gap: 10,
-        background: '#1a1d27',
-        border: '1px solid #2a2d3e',
-        borderRadius: 14,
-        padding: '8px 8px 8px 16px',
-        alignItems: 'flex-end'
-      }}>
+    <div className="cl-input-bar">
+      <div className="cl-input-wrap">
         <textarea
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
-          }}
-          placeholder={hasSession ? "Follow-up question..." : "Ask about a disease, treatment, or research topic..."}
+          ref={textareaRef}
           rows={1}
-          style={{
-            flex: 1,
-            background: 'transparent',
-            border: 'none',
-            outline: 'none',
-            color: '#e8e8e8',
-            fontSize: 14,
-            resize: 'none',
-            maxHeight: 120,
-            lineHeight: 1.5,
-            paddingTop: 4
-          }}
+          placeholder="Ask about treatments, trials, guidelines…"
+          onKeyDown={handleKeyDown}
+          onInput={handleInput}
+          disabled={loading}
         />
-        <button
-          onClick={handleSend}
-          disabled={!text.trim() || loading}
-          style={{
-            width: 38, height: 38,
-            borderRadius: 10,
-            background: text.trim() && !loading ? '#4a6cf7' : '#1e2030',
-            border: 'none',
-            cursor: text.trim() && !loading ? 'pointer' : 'not-allowed',
-            color: '#fff',
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'background 0.2s',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-        >
-          {loading ? '⏳' : '↑'}
-        </button>
       </div>
-      <p style={{ fontSize: 11, color: '#333', textAlign: 'center', marginTop: 8 }}>
-        For research purposes only — consult a healthcare professional for medical advice.
-      </p>
+      <button
+        className="cl-send-btn"
+        onClick={handleSend}
+        disabled={loading}
+        aria-label="Send message"
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path
+            d="M3 9h12M10 4l5 5-5 5"
+            stroke="white"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
     </div>
   );
 }
+
+InputBar.propTypes = {
+  onSend: PropTypes.func.isRequired,
+  loading: PropTypes.bool.isRequired,
+};
+
+export default InputBar;
