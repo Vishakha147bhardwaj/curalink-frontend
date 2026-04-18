@@ -5,7 +5,7 @@ import ChatWindow from './components/ChatWindow';
 import InputBar from './components/InputBar';
 import './App.css';
 
-const API = 'http://localhost:5000/api';
+const API = 'https://curalink-backend-t8ek.onrender.com/api';
 
 export default function App() {
   const [messages, setMessages] = useState([]);
