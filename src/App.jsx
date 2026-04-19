@@ -8,48 +8,58 @@ import './App.css';
 const API = 'https://curalink-backend-t8ek.onrender.com/api';
 const STORAGE_KEY = 'curalink_sessions';
 const CONTEXT_KEY = 'curalink_context';
+const THEME_KEY   = 'curalink_theme';
 
 export default function App() {
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState(null);
-  const [showContext, setShowContext] = useState(true);
+  const [messages, setMessages]       = useState([]);
+  const [loading, setLoading]         = useState(false);
+  const [sessionId, setSessionId]     = useState(null);
+  const [showContext, setShowContext]  = useState(true);
   const [showSidebar, setShowSidebar] = useState(false);
-  const [context, setContext] = useState({ name: '', disease: '', location: '' });
-  const [sessions, setSessions] = useState([]);
+  const [context, setContext]         = useState({ name: '', disease: '', location: '' });
+  const [sessions, setSessions]       = useState([]);
   const [contextSaved, setContextSaved] = useState(false);
+  const [theme, setTheme]             = useState('dark');
 
-  // Load saved context + sessions on mount
+  /* ── Restore persisted data ── */
   useEffect(() => {
     try {
-      const savedCtx = localStorage.getItem(CONTEXT_KEY);
-      if (savedCtx) setContext(JSON.parse(savedCtx));
-      const savedSess = localStorage.getItem(STORAGE_KEY);
-      if (savedSess) setSessions(JSON.parse(savedSess));
-    } catch (error) {
-      console.warn('Failed to load saved data from localStorage:', error);
-    }
+      const c = localStorage.getItem(CONTEXT_KEY);
+      if (c) setContext(JSON.parse(c));
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (s) setSessions(JSON.parse(s));
+      const t = localStorage.getItem(THEME_KEY);
+      if (t) setTheme(t);
+    } catch { /* ignore */ }
   }, []);
 
+  /* ── Apply theme to <html> ── */
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
+  /* ── Quick prompt listener ── */
   useEffect(() => {
     const handler = e => sendMessage(e.detail);
     window.addEventListener('quickPrompt', handler);
     return () => window.removeEventListener('quickPrompt', handler);
   }, [sessionId, context]);
 
-  const saveSessionToStorage = useCallback((sid, msgs, ctx) => {
-    const firstUser = msgs.find(m => m.role === 'user');
-    if (!firstUser) return;
+  /* ── Save session ── */
+  const saveSession = useCallback((sid, msgs, ctx) => {
+    const first = msgs.find(m => m.role === 'user');
+    if (!first) return;
     const entry = {
       id: sid,
-      title: firstUser.content.substring(0, 65),
+      title: first.content.substring(0, 65),
       disease: ctx.disease || null,
       timestamp: new Date().toISOString(),
       messages: msgs.map(m => ({
-        role: m.role,
-        content: m.content,
-        sources: m.sources || [],
-        trials: m.trials || [],
+        role: m.role, content: m.content,
+        sources: m.sources || [], trials: m.trials || [], meta: m.meta || null,
       })),
     };
     setSessions(prev => {
@@ -59,12 +69,12 @@ export default function App() {
     });
   }, []);
 
+  /* ── Send message ── */
   const sendMessage = async (text) => {
     if (!text.trim()) return;
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     setLoading(true);
     setShowContext(false);
-
     try {
       const res = await axios.post(`${API}/chat`, {
         sessionId,
@@ -84,7 +94,7 @@ export default function App() {
       };
       setMessages(prev => {
         const updated = [...prev, assistant];
-        saveSessionToStorage(sid, updated, context);
+        saveSession(sid, updated, context);
         return updated;
       });
     } catch {
@@ -93,23 +103,15 @@ export default function App() {
         content: 'Sorry, something went wrong. Please try again.',
         sources: [], trials: [],
       }]);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  const handleNewChat = () => {
-    setMessages([]); setSessionId(null); setShowContext(true);
-  };
-
-  const handleLoadSession = (s) => {
-    setMessages(s.messages);
-    setSessionId(s.id);
-    setShowContext(false);
-    setShowSidebar(false);
+  const handleNewChat       = () => { setMessages([]); setSessionId(null); setShowContext(true); };
+  const handleLoadSession   = (s) => {
+    setMessages(s.messages); setSessionId(s.id);
+    setShowContext(false); setShowSidebar(false);
     if (s.disease) setContext(p => ({ ...p, disease: s.disease }));
   };
-
   const handleDeleteSession = (e, sid) => {
     e.stopPropagation();
     setSessions(prev => {
@@ -118,39 +120,27 @@ export default function App() {
       return updated;
     });
   };
-
   const handleSaveContext = () => {
     localStorage.setItem(CONTEXT_KEY, JSON.stringify(context));
     setContextSaved(true);
     setTimeout(() => setContextSaved(false), 2000);
   };
 
-  const handleClearContext = () => {
-    localStorage.removeItem(CONTEXT_KEY);
-    setContext({ name: '', disease: '', location: '' });
-  };
-
   const formatTime = (iso) => {
-    const d = new Date(iso), now = new Date(), diff = now - d;
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    const d = new Date(iso), diff = Date.now() - d;
+    if (diff < 60000)    return 'just now';
+    if (diff < 3600000)  return `${Math.floor(diff / 60000)}m ago`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
     return d.toLocaleDateString();
   };
 
   return (
-    <div className="cl-app">
-      {/* Ambient background */}
-      <div className="cl-glass-bg">
-        <div className="cl-blob cl-blob-1" />
-        <div className="cl-blob cl-blob-2" />
-        <div className="cl-blob cl-blob-3" />
-      </div>
+    <div className="cl-app" data-theme={theme}>
+      <div className="cl-glass-bg" />
 
-      {/* Sidebar overlay */}
       {showSidebar && <div className="cl-sidebar-overlay" onClick={() => setShowSidebar(false)} />}
 
-      {/* ── Recent Sessions Sidebar ─────────────────── */}
+      {/* ── Sidebar ── */}
       <aside className={`cl-sidebar ${showSidebar ? 'cl-sidebar-open' : ''}`}>
         <div className="cl-sidebar-header">
           <h3>Recent Chats</h3>
@@ -168,7 +158,7 @@ export default function App() {
             >
               <div className="cl-session-card-top">
                 <span className="cl-session-time">{formatTime(s.timestamp)}</span>
-                <button className="cl-session-delete" onClick={(e) => handleDeleteSession(e, s.id)}>✕</button>
+                <button className="cl-session-delete" onClick={e => handleDeleteSession(e, s.id)}>✕</button>
               </div>
               <p className="cl-session-title">{s.title}</p>
               {s.disease && <span className="cl-session-tag">{s.disease}</span>}
@@ -182,12 +172,12 @@ export default function App() {
         </div>
       </aside>
 
-      {/* ── Header ─────────────────────────────────── */}
+      {/* ── Header ── */}
       <header className="cl-header">
         <div className="cl-header-left">
-          <button className="cl-sidebar-toggle" onClick={() => setShowSidebar(p => !p)} title="Recent chats">
+          <button className="cl-sidebar-toggle" onClick={() => setShowSidebar(p => !p)}>
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M2 4h14M2 9h14M2 14h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <path d="M2 4h14M2 9h14M2 14h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
             </svg>
             {sessions.length > 0 && <span className="cl-sidebar-badge">{sessions.length}</span>}
           </button>
@@ -199,10 +189,14 @@ export default function App() {
             </div>
           </div>
         </div>
+
         <div className="cl-header-right">
           {context.disease && (
             <div className="cl-pill"><span className="cl-pill-dot" />{context.disease}</div>
           )}
+          <button className="cl-theme-toggle" onClick={toggleTheme} title="Toggle theme">
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           <button className="cl-btn-ghost" onClick={() => setShowContext(p => !p)}>
             {showContext ? 'Hide context' : 'Patient context'}
           </button>
@@ -210,7 +204,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Patient Context Panel ───────────────────── */}
+      {/* ── Context panel ── */}
       {showContext && (
         <div className="cl-context-panel">
           <span className="cl-context-label">Patient</span>
@@ -221,20 +215,20 @@ export default function App() {
           <ContextField icon={<PinIcon />} placeholder="Location (for trials)"
             value={context.location} onChange={v => setContext(p => ({ ...p, location: v }))} />
           <div className="cl-context-actions">
-            <button
-              className={`cl-context-save ${contextSaved ? 'saved' : ''}`}
-              onClick={handleSaveContext}
-            >
+            <button className={`cl-context-save ${contextSaved ? 'saved' : ''}`} onClick={handleSaveContext}>
               {contextSaved ? '✓ Saved!' : '💾 Save'}
             </button>
             {localStorage.getItem(CONTEXT_KEY) && (
-              <button className="cl-context-clear" onClick={handleClearContext}>Clear</button>
+              <button className="cl-context-clear" onClick={() => {
+                localStorage.removeItem(CONTEXT_KEY);
+                setContext({ name: '', disease: '', location: '' });
+              }}>Clear</button>
             )}
           </div>
         </div>
       )}
 
-      {/* ── Chat Window ─────────────────────────────── */}
+      {/* ── Chat ── */}
       <ChatWindow
         messages={messages}
         loading={loading}
@@ -242,18 +236,19 @@ export default function App() {
         patientName={context.name || null}
       />
 
-      {/* ── Status bar ──────────────────────────────── */}
+      {/* ── Status ── */}
       <div className="cl-status-bar">
         <span className="cl-status-dot" />
         <span>Connected · Llama3 via Groq · {sessions.length} saved chats</span>
       </div>
 
-      {/* ── Input Bar ───────────────────────────────── */}
+      {/* ── Input ── */}
       <InputBar onSend={sendMessage} loading={loading} hasSession={!!sessionId} />
     </div>
   );
 }
 
+/* ── Helper components ── */
 function ContextField({ icon, placeholder, value, onChange }) {
   return (
     <div className="cl-context-field">
@@ -263,35 +258,37 @@ function ContextField({ icon, placeholder, value, onChange }) {
   );
 }
 ContextField.propTypes = {
-  icon: PropTypes.node.isRequired, placeholder: PropTypes.string.isRequired,
-  value: PropTypes.string.isRequired, onChange: PropTypes.func.isRequired,
+  icon: PropTypes.node.isRequired,
+  placeholder: PropTypes.string.isRequired,
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
 };
 
 function RodOfAsclepiusIcon() {
   return (
     <svg viewBox="0 0 100 100" width="20" height="20">
-      <rect x="47" y="10" width="6" height="80" rx="3" fill="white" />
+      <rect x="47" y="10" width="6" height="80" rx="3" fill="white"/>
       <path d="M50 20 C70 25, 70 40, 50 45 C30 50, 30 65, 50 70"
-        fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" />
-      <circle cx="50" cy="20" r="3" fill="white" />
+        fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"/>
+      <circle cx="50" cy="20" r="3" fill="white"/>
     </svg>
   );
 }
 function PersonIcon() {
-  return <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-    <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M2 13c0-3 2-5 6-5s6 2 6 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+    <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5"/>
+    <path d="M2 13c0-3 2-5 6-5s6 2 6 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
   </svg>;
 }
 function MicroscopeIcon() {
-  return <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-    <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+    <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.5"/>
+    <path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
   </svg>;
 }
 function PinIcon() {
-  return <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-    <path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6c0 3.5 4.5 8.5 4.5 8.5S12.5 9.5 12.5 6C12.5 3.5 10.5 1.5 8 1.5z" stroke="currentColor" strokeWidth="1.5" />
-    <circle cx="8" cy="6" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+    <path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6c0 3.5 4.5 8.5 4.5 8.5S12.5 9.5 12.5 6C12.5 3.5 10.5 1.5 8 1.5z" stroke="currentColor" strokeWidth="1.5"/>
+    <circle cx="8" cy="6" r="1.5" stroke="currentColor" strokeWidth="1.3"/>
   </svg>;
 }
