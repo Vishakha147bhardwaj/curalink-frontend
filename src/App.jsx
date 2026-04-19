@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
-import axios from 'axios';
 import ChatWindow from './components/ChatWindow';
 import InputBar from './components/InputBar';
 import './App.css';
@@ -11,15 +10,16 @@ const CONTEXT_KEY = 'curalink_context';
 const THEME_KEY   = 'curalink_theme';
 
 export default function App() {
-  const [messages, setMessages]       = useState([]);
-  const [loading, setLoading]         = useState(false);
-  const [sessionId, setSessionId]     = useState(null);
-  const [showContext, setShowContext]  = useState(true);
-  const [showSidebar, setShowSidebar] = useState(false);
-  const [context, setContext]         = useState({ name: '', disease: '', location: '' });
-  const [sessions, setSessions]       = useState([]);
+  const [messages, setMessages]         = useState([]);
+  const [loading, setLoading]           = useState(false);
+  const [sessionId, setSessionId]       = useState(null);
+  const [showContext, setShowContext]    = useState(true);
+  const [showSidebar, setShowSidebar]   = useState(false);
+  const [context, setContext]           = useState({ name: '', disease: '', location: '' });
+  const [sessions, setSessions]         = useState([]);
   const [contextSaved, setContextSaved] = useState(false);
-  const [theme, setTheme]             = useState('dark');
+  const [theme, setTheme]               = useState('dark');
+  const [pipeline, setPipeline]         = useState([]);   // ← live pipeline steps
 
   /* ── Restore persisted data ── */
   useEffect(() => {
@@ -69,44 +69,167 @@ export default function App() {
     });
   }, []);
 
-  /* ── Send message ── */
+  /* ── Send message with SSE streaming ── */
   const sendMessage = async (text) => {
     if (!text.trim()) return;
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     setLoading(true);
     setShowContext(false);
+    setPipeline([]);   // reset pipeline
+
     try {
-      const res = await axios.post(`${API}/chat`, {
-        sessionId,
-        message: text,
-        patientName: context.name || null,
-        disease: context.disease || null,
-        location: context.location || null,
-      });
-      const sid = sessionId || res.data.sessionId;
-      if (!sessionId) setSessionId(sid);
-      const assistant = {
-        role: 'assistant',
-        content: res.data.response,
-        sources: res.data.sources,
-        trials: res.data.trials,
-        meta: res.data.meta,
-      };
-      setMessages(prev => {
-        const updated = [...prev, assistant];
-        saveSession(sid, updated, context);
-        return updated;
-      });
-    } catch {
+      // ── Try SSE streaming endpoint first ──
+      // If your backend supports SSE at /api/chat/stream, use that.
+      // Otherwise it falls back to the regular POST below.
+      const supportsStream = true; // set false if backend doesn't support SSE yet
+
+      if (supportsStream) {
+        await streamMessage(text);
+      } else {
+        await regularMessage(text);
+      }
+    } catch (err) {
+      console.error(err);
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: 'Sorry, something went wrong. Please try again.',
         sources: [], trials: [],
       }]);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      // keep pipeline visible briefly then clear
+      setTimeout(() => setPipeline([]), 2500);
+    }
   };
 
-  const handleNewChat       = () => { setMessages([]); setSessionId(null); setShowContext(true); };
+  /* ── SSE streaming path ── */
+  const streamMessage = async (text) => {
+    const res = await fetch(`${API}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        message: text,
+        patientName: context.name || null,
+        disease: context.disease || null,
+        location: context.location || null,
+      }),
+    });
+
+    if (!res.ok) {
+      // backend doesn't have SSE endpoint yet → fall back
+      await regularMessage(text);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalData = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE lines: "data: {...}\n\n"
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop(); // keep incomplete chunk
+
+      for (const chunk of lines) {
+        const line = chunk.replace(/^data:\s*/, '').trim();
+        if (!line || line === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(line);
+
+          if (evt.type === 'pipeline') {
+            // e.g. { type: 'pipeline', step: 'pubmed', label: 'Fetching PubMed...', status: 'running' | 'done' | 'error', count: 12 }
+            setPipeline(prev => {
+              const exists = prev.findIndex(p => p.step === evt.step);
+              if (exists >= 0) {
+                const updated = [...prev];
+                updated[exists] = evt;
+                return updated;
+              }
+              return [...prev, evt];
+            });
+          } else if (evt.type === 'done') {
+            finalData = evt;
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+
+    if (finalData) {
+      const sid = sessionId || finalData.sessionId;
+      if (!sessionId && sid) setSessionId(sid);
+      const assistant = {
+        role: 'assistant',
+        content: finalData.response,
+        sources: finalData.sources,
+        trials: finalData.trials,
+        meta: finalData.meta,
+      };
+      setMessages(prev => {
+        const updated = [...prev, assistant];
+        if (sid) saveSession(sid, updated, context);
+        return updated;
+      });
+    }
+  };
+
+  /* ── Regular (non-SSE) fallback ── */
+  const regularMessage = async (text) => {
+    // Simulate pipeline steps visually while waiting
+    const FAKE_STEPS = [
+      { step: 'parse',    label: 'Parsing query',           icon: '🔍' },
+      { step: 'pubmed',   label: 'Fetching PubMed',         icon: '📚' },
+      { step: 'openalex', label: 'Fetching OpenAlex',       icon: '🔬' },
+      { step: 'trials',   label: 'Searching clinical trials',icon: '🧪' },
+      { step: 'rank',     label: 'Ranking & summarizing',   icon: '🧠' },
+      { step: 'generate', label: 'Generating response',     icon: '✨' },
+    ];
+
+    // animate steps with staggered delays
+    FAKE_STEPS.forEach((s, i) => {
+      setTimeout(() => {
+        setPipeline(prev => [...prev, { ...s, status: 'running' }]);
+      }, i * 600);
+    });
+
+    const res = await fetch(`${API}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        message: text,
+        patientName: context.name || null,
+        disease: context.disease || null,
+        location: context.location || null,
+      }),
+    });
+    const data = await res.json();
+
+    // mark all as done
+    setPipeline(FAKE_STEPS.map(s => ({ ...s, status: 'done' })));
+
+    const sid = sessionId || data.sessionId;
+    if (!sessionId && sid) setSessionId(sid);
+    const assistant = {
+      role: 'assistant',
+      content: data.response,
+      sources: data.sources,
+      trials: data.trials,
+      meta: data.meta,
+    };
+    setMessages(prev => {
+      const updated = [...prev, assistant];
+      if (sid) saveSession(sid, updated, context);
+      return updated;
+    });
+  };
+
+  const handleNewChat       = () => { setMessages([]); setSessionId(null); setShowContext(true); setPipeline([]); };
   const handleLoadSession   = (s) => {
     setMessages(s.messages); setSessionId(s.id);
     setShowContext(false); setShowSidebar(false);
@@ -234,6 +357,7 @@ export default function App() {
         loading={loading}
         onQuickPrompt={sendMessage}
         patientName={context.name || null}
+        pipeline={pipeline}
       />
 
       {/* ── Status ── */}

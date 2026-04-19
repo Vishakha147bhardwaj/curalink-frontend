@@ -8,7 +8,6 @@ const QUICK_PROMPTS = [
   { label: '📋 NCCN guidelines',    query: 'Latest NCCN guidelines' },
 ];
 
-// ── Contextual follow-up suggestions keyed by topic ──
 const EXPLORE_SETS = [
   {
     match: ['treatment', 'therapy', 'standard of care', 'chemo', 'radiation', 'surgery'],
@@ -73,7 +72,6 @@ const EXPLORE_SETS = [
       { icon: '💊', text: 'Are there FDA-approved targeted therapies for these mutations?' },
     ],
   },
-  // fallback
   {
     match: [],
     suggestions: [
@@ -110,6 +108,68 @@ function toText(val) {
   if (typeof val === 'object') return val.title || val.url || val.nctId || '';
   return String(val);
 }
+
+// ── Pipeline Panel ────────────────────────────────────
+const PIPELINE_META = {
+  parse:    { icon: '🔍', label: 'Parsing query',            color: 'var(--blue)' },
+  pubmed:   { icon: '📚', label: 'Fetching PubMed',          color: '#4ade80' },
+  openalex: { icon: '🔬', label: 'Fetching OpenAlex',        color: '#a78bfa' },
+  trials:   { icon: '🧪', label: 'Searching clinical trials', color: '#34d399' },
+  rank:     { icon: '🧠', label: 'Ranking & summarizing',    color: '#fb923c' },
+  generate: { icon: '✨', label: 'Generating response',      color: '#f472b6' },
+};
+
+function PipelinePanel({ steps }) {
+  if (!steps || steps.length === 0) return null;
+
+  return (
+    <div className="cl-pipeline-panel">
+      <div className="cl-pipeline-header">
+        <span className="cl-pipeline-title">
+          <span className="cl-pipeline-pulse" />
+          Research Pipeline
+        </span>
+      </div>
+      <div className="cl-pipeline-steps">
+        {steps.map((step, i) => {
+          const meta   = PIPELINE_META[step.step] || { icon: '⚙️', label: step.label || step.step, color: 'var(--blue)' };
+          const isDone = step.status === 'done';
+          const isErr  = step.status === 'error';
+          const isRun  = step.status === 'running';
+
+          return (
+            <div key={step.step || i} className={`cl-pipeline-step ${step.status}`}>
+              {/* connector line */}
+              {i < steps.length - 1 && <div className="cl-pipeline-line" />}
+
+              {/* icon */}
+              <div className="cl-pipeline-icon-wrap" style={{ '--step-color': meta.color }}>
+                {isRun && <div className="cl-pipeline-spinner" style={{ borderTopColor: meta.color }} />}
+                <span className="cl-pipeline-icon">
+                  {isDone ? '✓' : isErr ? '✕' : meta.icon}
+                </span>
+              </div>
+
+              {/* label + count */}
+              <div className="cl-pipeline-info">
+                <span className="cl-pipeline-label" style={isDone ? { color: meta.color } : {}}>
+                  {step.label || meta.label}
+                </span>
+                {step.count != null && isDone && (
+                  <span className="cl-pipeline-count" style={{ color: meta.color }}>
+                    {step.count} results
+                  </span>
+                )}
+                {isRun && <span className="cl-pipeline-running-dots"><span /><span /><span /></span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+PipelinePanel.propTypes = { steps: PropTypes.array };
 
 // ── Plain text with bold + bullet support ─────────────
 function PlainText({ text }) {
@@ -473,7 +533,6 @@ function AIBubble({ msg, onSend, isLast }) {
         {activeTab === 'safety' && <DrugSafetyPanel sources={msg.sources} />}
       </div>
 
-      {/* Explore chips — only on last AI message, only on response tab */}
       {isLast && activeTab === 'response' && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <ExploreSuggestions msg={msg} onSend={onSend} />
@@ -489,13 +548,18 @@ AIBubble.propTypes = {
 };
 
 // ── Main ChatWindow ───────────────────────────────────
-export default function ChatWindow({ messages, loading, onQuickPrompt, patientName }) {
+export default function ChatWindow({ messages, loading, onQuickPrompt, patientName, pipeline }) {
   const bottomRef = useRef(null);
   const greeting  = useMemo(() => getGreeting(), []);
 
   useEffect(() => {
     if (!loading) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  // also scroll when pipeline updates
+  useEffect(() => {
+    if (pipeline?.length) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [pipeline]);
 
   const lastAiIdx = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -511,7 +575,7 @@ export default function ChatWindow({ messages, loading, onQuickPrompt, patientNa
         <div className="cl-welcome">
           <div className="cl-welcome-ring">
             <svg width="28" height="28" viewBox="0 0 26 26">
-              <path d="M13 3C7.5 3 3 7.5 3 13s4.5 10 10 10 10-4.5 10-10S18.5 3 13 3z"
+              <path d="M13 3C7.5 3 13s4.5 10 10 10 10-4.5 10-10S18.5 3 13 3z"
                 stroke="var(--blue)" strokeWidth="1.8" fill="none"/>
               <path d="M13 8v5l3 3" stroke="var(--blue)" strokeWidth="1.8" strokeLinecap="round" fill="none"/>
             </svg>
@@ -527,8 +591,8 @@ export default function ChatWindow({ messages, loading, onQuickPrompt, patientNa
       )}
 
       {messages.map((msg, i) => {
-        const isUser    = msg.role === 'user';
-        const isLastAi  = !isUser && i === lastAiIdx && !loading;
+        const isUser   = msg.role === 'user';
+        const isLastAi = !isUser && i === lastAiIdx && !loading;
         return (
           <div key={i} className={`cl-msg ${isUser ? 'user' : 'ai'}`}>
             <div className={`cl-avatar ${isUser ? 'user' : 'ai'}`}>
@@ -544,12 +608,20 @@ export default function ChatWindow({ messages, loading, onQuickPrompt, patientNa
         );
       })}
 
+      {/* ── Live pipeline (shown while loading) ── */}
       {loading && (
         <div className="cl-msg ai">
           <div className="cl-avatar ai">⚕</div>
-          <div className="cl-bubble">
-            <div className="cl-typing-wrap">
-              <div className="cl-typing"><span /><span /><span /></div>
+          <div className="cl-bubble-wrap">
+            <div className="cl-bubble cl-bubble-pipeline">
+              {pipeline && pipeline.length > 0
+                ? <PipelinePanel steps={pipeline} />
+                : (
+                  <div className="cl-typing-wrap">
+                    <div className="cl-typing"><span /><span /><span /></div>
+                  </div>
+                )
+              }
             </div>
           </div>
         </div>
@@ -565,5 +637,6 @@ ChatWindow.propTypes = {
   loading:       PropTypes.bool.isRequired,
   onQuickPrompt: PropTypes.func.isRequired,
   patientName:   PropTypes.string,
+  pipeline:      PropTypes.array,
 };
-ChatWindow.defaultProps = { patientName: 'Doctor' };
+ChatWindow.defaultProps = { patientName: 'Doctor', pipeline: [] };
